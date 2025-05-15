@@ -1,16 +1,21 @@
 import os
 import numpy as np
 import csv
-import sys
 import onnxruntime as ort
+import urllib.request
 from PIL import Image
 
 # Configuration
 #MODEL_NAME = "wd-v1-4-moat-tagger-v2"  # Without ".onnx"
-MODEL_NAME = "wd-vit-tagger-v3" 
-MODEL_DIR = "./models"                 # Where model.onnx and selected_tags.csv are located
+#MODEL_NAME = "wd-vit-tagger-v3"
+MODEL_NAME = "model"
+MODEL_URL = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/model.onnx"
+MODEL_DIR = "./models"
 IMAGES_DIR = "./images"                # Folder with images
 TAGS_DIR = IMAGES_DIR                  # Where to write text files with tags
+TAGS_CSV = "selected_tags.csv"
+TAGS_CSV_URL = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/selected_tags.csv"
+
 THRESHOLD = 0.35
 CHARACTER_THRESHOLD = 0.85
 REPLACE_UNDERSCORE = True
@@ -18,12 +23,27 @@ TRAILING_COMMA = False
 ORT_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 # Prepare folders
-os.makedirs(TAGS_DIR, exist_ok=True)
+for path in [MODEL_DIR, IMAGES_DIR]:
+    os.makedirs(path, exist_ok=True)
 
-# Load the model
-print(f"Loading model {MODEL_NAME}...")
+# Paths
 model_path = os.path.join(MODEL_DIR, MODEL_NAME + ".onnx")
-tags_path = os.path.join(MODEL_DIR, MODEL_NAME + ".csv")
+tags_path = os.path.join(MODEL_DIR, TAGS_CSV)
+
+# Download model if needed
+if not os.path.exists(model_path):
+    print(f"Model not found at {model_path}. Downloading from {MODEL_URL}...")
+    urllib.request.urlretrieve(MODEL_URL, model_path)
+    print("Model downloaded.")
+
+# Download tags if needed
+if not os.path.exists(tags_path):
+    print(f"Tags not found at {tags_path}. Downloading from {TAGS_CSV_URL}...")
+    urllib.request.urlretrieve(TAGS_CSV_URL, tags_path)
+    print("Tags downloaded.")
+
+# Load model
+print(f"Loading model from {model_path}...")
 model = ort.InferenceSession(model_path, providers=ORT_PROVIDERS)
 
 # Load tags
