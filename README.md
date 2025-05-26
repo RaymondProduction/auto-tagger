@@ -81,3 +81,62 @@ Edit the following variables at the top of the script:
 - You can tweak thresholds to control strictness of tagging.
 
 ---
+## 🛠️ Build as Executable with PyInstaller
+
+To create a standalone executable from this script using **PyInstaller**, follow these steps:
+
+### 1. Install PyInstaller
+
+```bash
+pip install pyinstaller
+```
+
+### 2. Create the Executable
+
+Use the following command **(Linux syntax)**:
+
+```bash
+pyinstaller --onefile \
+  --add-data="/full/path/to/site-packages/onnxruntime:onnxruntime" \
+  auto-tagger.py
+```
+
+> Replace `/full/path/to/site-packages/onnxruntime` with the actual path to `onnxruntime` on your system. For example:
+
+```bash
+--add-data="/home/youruser/venv/lib/python3.10/site-packages/onnxruntime:onnxruntime"
+```
+
+### 3. Troubleshooting
+
+If you see an error like `ModuleNotFoundError: No module named 'onnxruntime'`, it's likely due to missing native libraries or incorrect inclusion.
+
+You may also need to add:
+
+```bash
+--hidden-import=onnxruntime
+```
+
+### 4. CUDA/TensorRT Warnings
+
+If you see warnings about missing libraries like `libcublas.so.12` or `libcudnn.so`, and you're not using GPU acceleration, **you can ignore these** as long as `CPUExecutionProvider` is in your `ORT_PROVIDERS`.
+
+---
+
+## ✅ Final Note
+
+Your executable will be located in:
+
+```plaintext
+./dist/auto-tagger
+```
+
+You can run it from the terminal:
+
+```bash
+./dist/auto-tagger
+```
+
+Or double-click it (on Windows) if you use `--noconsole`.
+
+---
