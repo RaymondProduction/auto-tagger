@@ -1,9 +1,13 @@
 
-# WD14/WD-VIT Tagger - Local Batch Image Tagging
+# WD14/WD-VIT Tagger - Local Batch Image Tagging with Metadata Merge 🏷️
 
-This script automatically tags a batch of images using a local ONNX model (`wd14-vit` or `wd-v1-4-moat`) with HuggingFace-style tag lists.
+This script automatically tags a batch of images using a local ONNX model (`wd14-vit` or `wd-v1-4-moat`) and merges them with any existing metadata (like prompts stored by Stable Diffusion tools such as AUTOMATIC1111).  
 
-It loads a `.onnx` model and `.csv` tag list, processes all images in a folder, and generates `.txt` files containing the filtered tags for each image.
+🧼 It also cleans prompts by:
+- Removing `<lora:...>` tags
+- Stripping brackets (`()`, `{}`, `[]`)
+- Keeping only the prompt part (excluding "Negative prompt" and below)
+- Deduplicating tags
 
 ---
 
@@ -12,10 +16,12 @@ It loads a `.onnx` model and `.csv` tag list, processes all images in a folder, 
 Install dependencies:
 
 ```bash
-pip install numpy onnxruntime-gpu Pillow
+pip install -r requirements.txt
 ```
 
-*(If you do not have a GPU, install `onnxruntime` instead of `onnxruntime-gpu`.)*
+**Note**:  
+- Use `onnxruntime-gpu` if you have a GPU  
+- Or replace it with `onnxruntime` if you're on CPU only
 
 ---
 
@@ -35,52 +41,72 @@ pip install numpy onnxruntime-gpu Pillow
 
 ## ⚙️ Configuration
 
-Edit the following variables at the top of the script:
+Edit these variables in `auto-tagger.py`:
 
 | Variable | Purpose | Example |
 |:--|:--|:--|
-| `MODEL_NAME` | Model name without extension | `"wd-vit-tagger-v3"` |
-| `MODEL_DIR` | Path to directory containing `.onnx` and `.csv` files | `"./models"` |
-| `IMAGES_DIR` | Path to directory containing images to tag | `"./images"` |
-| `TAGS_DIR` | Path to output `.txt` files | `"./images"` |
-| `THRESHOLD` | Minimum confidence for general tags | `0.35` |
-| `CHARACTER_THRESHOLD` | Minimum confidence for character tags | `0.85` |
-| `REPLACE_UNDERSCORE` | Replace underscores with spaces | `True` |
-| `TRAILING_COMMA` | Add trailing commas after tags | `False` |
+| `MODEL_NAME` | Model file name without extension | `"wd-vit-tagger-v3"` |
+| `MODEL_DIR` | Directory containing the `.onnx` and `.csv` | `"./models"` |
+| `IMAGES_DIR` | Input image folder | `"./images"` |
+| `TAGS_DIR` | Where `.txt` files with tags will be saved | `"./images"` |
+| `THRESHOLD` | Confidence threshold for general tags | `0.35` |
+| `CHARACTER_THRESHOLD` | Threshold for character tags | `0.85` |
+| `REPLACE_UNDERSCORE` | Replace `_` with space | `True` |
+| `TRAILING_COMMA` | Add comma at end of tag strings | `False` |
 | `ORT_PROVIDERS` | ONNX Runtime providers | `["CUDAExecutionProvider", "CPUExecutionProvider"]` |
 
 ---
 
 ## 🚀 How It Works
 
-- Loads the ONNX model and selected_tags.csv.
-- Processes each image:
-  - Resizes to a square canvas (white background) maintaining aspect ratio.
-  - Converts to BGR and runs inference through ONNX model.
-  - Applies `sigmoid` activation on model outputs.
-- Filters:
-  - General tags by `THRESHOLD`
-  - Character tags by `CHARACTER_THRESHOLD`
-- Outputs:
-  - `.txt` file containing selected tags for each image.
+1. Downloads the model and tag CSV if missing
+2. Processes all images in the `IMAGES_DIR`:
+   - Loads each image and any prompt metadata (if embedded)
+   - Cleans metadata prompt:
+     - Removes `<lora:...>` tags
+     - Keeps only portion before "Negative prompt:"
+     - Removes `()`, `[]`, `{}` brackets
+   - Runs ONNX model and filters tags by threshold
+   - Merges both sets of tags (metadata + model) and removes duplicates
+   - Writes final tag list to a `.txt` file
 
 ---
 
-## 📋 Example output (`image1.txt`)
+## 📋 Example Output (`image1.txt`)
 
 ```plaintext
-1girl, long_hair, blue_eyes, smile, looking_at_viewer
+bookcase, cat, cozy room, sunny light, tabby fur
+```
+
+This output could be a cleaned combination of:
+- Prompt from embedded metadata
+- Tags predicted by the ONNX model
+
+---
+
+## 📝 Example Console Output
+
+```plaintext
+=== image1.png ===
+📦 From Metadata:
+cat, sunny light, bookshelf, tabby fur, cozy room
+🤖 From Model:
+cat, bookshelf, cozy room, tabby fur
+📦 🔃 🤖 Combined tags:
+bookcase, cat, cozy room, sunny light, tabby fur
 ```
 
 ---
 
 ## ❗ Notes
 
-- Model expects images resized to a square with center-padding (NOT simple stretch).
-- Tags are sorted by type: **character** tags first (priority), then **general**.
-- You can tweak thresholds to control strictness of tagging.
+- If no metadata is found, only model-generated tags are used
+- All duplicates are removed (case-insensitive match)
+- Brackets like `(a)`, `{b}` are stripped to improve consistency
+- Tags are sorted alphabetically
 
 ---
+
 ## 🛠️ Build as Executable with PyInstaller
 
 To create a standalone executable from this script using **PyInstaller**, follow these steps:
@@ -91,21 +117,23 @@ To create a standalone executable from this script using **PyInstaller**, follow
 pip install pyinstaller
 ```
 
-### 2. Create the Executable
-
-Use the following command **(Linux syntax)**:
+### 2. Create the Executable (Linux example)
 
 ```bash
 pyinstaller --onefile \
-  --add-data="/full/path/to/site-packages/onnxruntime:onnxruntime" \
+  --add-data="venv/lib/python*/site-packages/onnxruntime:onnxruntime" \
   auto-tagger.py
 ```
 
-> Replace `/full/path/to/site-packages/onnxruntime` with the actual path to `onnxruntime` on your system. For example:
+Or use the helper script:
 
 ```bash
---add-data="/home/youruser/venv/lib/python3.10/site-packages/onnxruntime:onnxruntime"
+bash compile.sh
 ```
+
+> Adjust the path to `onnxruntime` depending on your Python version and OS.
+
+---
 
 ### 3. Troubleshooting
 
@@ -140,3 +168,6 @@ You can run it from the terminal:
 Or double-click it (on Windows) if you use `--noconsole`.
 
 ---
+
+Your final `.txt` tag files will be saved next to the images in the same folder (`TAGS_DIR`).  
+Output is easy to batch-edit, analyze, or reuse in training datasets.

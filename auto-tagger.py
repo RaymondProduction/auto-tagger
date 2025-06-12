@@ -4,6 +4,7 @@ import csv
 import onnxruntime as ort
 import urllib.request
 from PIL import Image
+import re
 
 # Configuration
 #MODEL_NAME = "wd-v1-4-moat-tagger-v2"  # Without ".onnx"
@@ -63,25 +64,44 @@ with open(tags_path, "r", encoding="utf-8") as f:
 
 print("Model and tags loaded.")
 
+# Function to extract prompt metadata and clean Lora tags
+def extract_clean_prompt(img):
+    try:
+        raw = img.info.get("parameters")
+        if not raw:
+            return None, None
+
+        # Cut everything before "Negative prompt:"
+        raw_main_prompt = raw.split("Negative prompt:")[0]
+
+        # Remove <lora:...>
+        cleaned = re.sub(r"<lora:[^>]+?>", "", raw_main_prompt)
+
+        # Remove all types of brackets
+        cleaned = re.sub(r"[\[\]\(\)\{\}]", "", cleaned)
+
+        return raw.strip(), cleaned.strip()
+    except Exception as e:
+        return None, None
+
 # Function to tag a single image
-def tag_image(image_path):
-    image = Image.open(image_path).convert("RGB")
+def tag_image(image):
     input = model.get_inputs()[0]
     height = input.shape[1]
 
     # Prepare the image
     ratio = float(height) / max(image.size)
     new_size = tuple([int(x * ratio) for x in image.size])
-    image = image.resize(new_size, Image.LANCZOS)
+    image_resized = image.resize(new_size, Image.LANCZOS)
     square = Image.new("RGB", (height, height), (255, 255, 255))
-    square.paste(image, ((height - new_size[0]) // 2, (height - new_size[1]) // 2))
-    image = np.array(square).astype(np.float32)
-    image = image[:, :, ::-1]  # RGB -> BGR
-    image = np.expand_dims(image, 0)
+    square.paste(image_resized, ((height - new_size[0]) // 2, (height - new_size[1]) // 2))
+    image_np = np.array(square).astype(np.float32)
+    image_np = image_np[:, :, ::-1]  # RGB -> BGR
+    image_np = np.expand_dims(image_np, 0)
 
     # Inference
     label_name = model.get_outputs()[0].name
-    probs = model.run([label_name], {input.name: image})[0]
+    probs = model.run([label_name], {input.name: image_np})[0]
 
     result = list(zip(tags, probs[0]))
 
@@ -96,7 +116,7 @@ def tag_image(image_path):
     else:
         tags_string = ", ".join(tag[0] for tag in all_tags)
 
-    return tags_string
+    return tags_string.strip()
 
 # Process all images
 image_extensions = [".png", ".jpg", ".jpeg", ".bmp", ".webp"]
@@ -106,14 +126,54 @@ print(f"Tagging images in {IMAGES_DIR}...")
 for filename in os.listdir(IMAGES_DIR):
     if any(filename.lower().endswith(ext) for ext in image_extensions):
         image_path = os.path.join(IMAGES_DIR, filename)
-        tags_string = tag_image(image_path)
 
+        # Open image once
+        try:
+            img = Image.open(image_path).convert("RGB")
+        except Exception as e:
+            print(f"Failed to open {filename}: {e}")
+            continue
+
+        # Read and clean metadata prompt
+        raw_prompt, cleaned_prompt = extract_clean_prompt(img)
+
+        # Tag the image
+        auto_tags = tag_image(img)
+
+        print(f"\n=== {filename} ===")
+        if cleaned_prompt:
+            print("📦 From Metadata:")
+            print(cleaned_prompt)
+        else:
+            print("📦 No metadata found.")
+
+        print("🤖 From Model:")
+        print(auto_tags)
+
+        if cleaned_prompt and auto_tags.strip().lower() == cleaned_prompt.lower():
+            print("⚠️ Duplicate tags (prompt matches model tags)")
+
+        # Save tags to file
         tags_filename = os.path.splitext(filename)[0] + ".txt"
         tags_filepath = os.path.join(TAGS_DIR, tags_filename)
 
+        # Combine cleaned_prompt (without <lora:...>) and auto_tags, avoiding duplicates
+        combined_tags_set = set()
+
+        if cleaned_prompt:
+            combined_tags_set.update(tag.strip() for tag in cleaned_prompt.split(",") if tag.strip())
+
+        if auto_tags:
+            combined_tags_set.update(tag.strip() for tag in auto_tags.split(",") if tag.strip())
+
+        # Convert to string
+        combined_tags_string = ", ".join(sorted(combined_tags_set))
+
+        print("📦 🔃 🤖 Combined tags:")
+        print(combined_tags_string)
+
+        # Save to file
         with open(tags_filepath, "w", encoding="utf-8") as f:
-            f.write(tags_string.strip())
+            f.write(combined_tags_string)
 
-        print(f"Tagged {filename}: {tags_string}")
-
-print("All done!")
+print("\nAll done!")
