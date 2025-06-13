@@ -5,15 +5,38 @@ import onnxruntime as ort
 import urllib.request
 from PIL import Image
 import re
+import argparse
 
 # Configuration
 #MODEL_NAME = "wd-v1-4-moat-tagger-v2"  # Without ".onnx"
 #MODEL_NAME = "wd-vit-tagger-v3"
+# Argument parsing
+parser = argparse.ArgumentParser(description="Batch tag images with optional metadata prompt merging.")
+
+
+# Defaults
+parser.set_defaults(prompt_from_meta=True, analys_by_ai=True)
+
+# Include flags to disable features
+parser.add_argument("-np", "--no-prompt-from-meta", dest="prompt_from_meta", action="store_false",
+                    help="❌ Disable tags from embedded prompt metadata (default: ON)")
+parser.add_argument("-nai", "--no-analys-by-ai", dest="analys_by_ai", action="store_false",
+                    help="❌ Disable AI-based image analysis (default: ON)")
+
+parser.add_argument("-i", "--input", type=str, default="./images", help="Input folder with images")
+parser.add_argument("-o", "--output", type=str, default="./images", help="Output folder for tag text files")
+parser.add_argument("-m", "--model-dir", type=str, default="./models", help="Directory containing ONNX model and tags CSV")
+parser.add_argument("-nc", "--no-clean", action="store_true", help="Do not clean prompt metadata (keep brackets, <lora>, etc.)")
+
+args = parser.parse_args()
+
+
+# Configuration from arguments
 MODEL_NAME = "model"
 MODEL_URL = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/model.onnx"
-MODEL_DIR = "./models"
-IMAGES_DIR = "./images"                # Folder with images
-TAGS_DIR = IMAGES_DIR                  # Where to write text files with tags
+MODEL_DIR = args.model_dir
+IMAGES_DIR = args.input
+TAGS_DIR = args.output
 TAGS_CSV = "selected_tags.csv"
 TAGS_CSV_URL = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/selected_tags.csv"
 
@@ -24,7 +47,7 @@ TRAILING_COMMA = False
 ORT_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 
 # Prepare folders
-for path in [MODEL_DIR, IMAGES_DIR]:
+for path in [MODEL_DIR, IMAGES_DIR, TAGS_DIR]:
     os.makedirs(path, exist_ok=True)
 
 # Paths
@@ -69,10 +92,14 @@ def extract_clean_prompt(img):
     try:
         raw = img.info.get("parameters")
         if not raw:
-            return None, None
+            return None
 
-        # Cut everything before "Negative prompt:"
+        # Retrive base  prompt before "Negative prompt:"
         raw_main_prompt = raw.split("Negative prompt:")[0]
+
+        if args.no_clean:
+            # Don't clean the prompt if --no-clean is specified
+            return raw_main_prompt.strip()
 
         # Remove <lora:...>
         cleaned = re.sub(r"<lora:[^>]+?>", "", raw_main_prompt)
@@ -80,9 +107,9 @@ def extract_clean_prompt(img):
         # Remove all types of brackets
         cleaned = re.sub(r"[\[\]\(\)\{\}]", "", cleaned)
 
-        return raw.strip(), cleaned.strip()
+        return cleaned.strip()
     except Exception as e:
-        return None, None
+        return None
 
 # Function to tag a single image
 def tag_image(image):
@@ -135,35 +162,38 @@ for filename in os.listdir(IMAGES_DIR):
             continue
 
         # Read and clean metadata prompt
-        raw_prompt, cleaned_prompt = extract_clean_prompt(img)
-
-        # Tag the image
-        auto_tags = tag_image(img)
 
         print(f"\n=== {filename} ===")
-        if cleaned_prompt:
-            print("📦 From Metadata:")
-            print(cleaned_prompt)
-        else:
-            print("📦 No metadata found.")
+        cleaned_prompt = None 
+        if args.prompt_from_meta:
+            cleaned_prompt = extract_clean_prompt(img)
+            if cleaned_prompt:
+                print("📦 From Metadata:")
+                print(cleaned_prompt)
+            else:
+                print("📦 No metadata found.")
 
-        print("🤖 From Model:")
-        print(auto_tags)
+        auto_tags = None
+        if args.analys_by_ai:
+            auto_tags = tag_image(img)
+            print("🤖 From Model:")
+            print(auto_tags)
 
-        if cleaned_prompt and auto_tags.strip().lower() == cleaned_prompt.lower():
+        if cleaned_prompt and auto_tags and auto_tags.strip().lower() == cleaned_prompt.lower():
             print("⚠️ Duplicate tags (prompt matches model tags)")
 
         # Save tags to file
         tags_filename = os.path.splitext(filename)[0] + ".txt"
         tags_filepath = os.path.join(TAGS_DIR, tags_filename)
 
-        # Combine cleaned_prompt (without <lora:...>) and auto_tags, avoiding duplicates
         combined_tags_set = set()
 
-        if cleaned_prompt:
+        # Add only if -pm is specified
+        if args.prompt_from_meta and cleaned_prompt:
             combined_tags_set.update(tag.strip() for tag in cleaned_prompt.split(",") if tag.strip())
 
-        if auto_tags:
+        # Add only if -ai is specified
+        if args.analys_by_ai and auto_tags:
             combined_tags_set.update(tag.strip() for tag in auto_tags.split(",") if tag.strip())
 
         # Convert to string
