@@ -2,3 +2,4 @@ numpy
 onnxruntime-gpu
 Pillow
 pyinstaller
+python-Levenshtein

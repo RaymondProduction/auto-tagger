@@ -6,6 +6,9 @@ import urllib.request
 from PIL import Image
 import re
 import argparse
+from Levenshtein import distance
+
+from tag_categories import CATEGORY_KEYWORDS # Define categories and keywords for filtering
 
 # Configuration
 #MODEL_NAME = "wd-v1-4-moat-tagger-v2"  # Without ".onnx"
@@ -27,11 +30,14 @@ parser.add_argument("-i", "--input", type=str, default="./images", help="Input f
 parser.add_argument("-o", "--output", type=str, default="./images", help="Output folder for tag text files")
 parser.add_argument("-m", "--model-dir", type=str, default="./models", help="Directory containing ONNX model and tags CSV")
 parser.add_argument("-nc", "--no-clean", action="store_true", help="Do not clean prompt metadata (keep brackets, <lora>, etc.)")
+parser.add_argument("-fc", "--filter-category", type=str,
+                    help="Comma-separated categories to keep: bg,pose,nsfw,shape,place,accessories,emotion,composition,quality,clothing,objects,character")
 
 args = parser.parse_args()
 
 
 # Configuration from arguments
+MAX_TAG_EDIT_DISTANCE = 1  # Allow one typo (for example, "sceneri" => "scenery")
 MODEL_NAME = "model"
 MODEL_URL = "https://huggingface.co/SmilingWolf/wd-vit-tagger-v3/resolve/main/model.onnx"
 MODEL_DIR = args.model_dir
@@ -86,6 +92,45 @@ with open(tags_path, "r", encoding="utf-8") as f:
         tags.append(tag)
 
 print("Model and tags loaded.")
+
+def filter_tags_by_category(tag_list):
+    if not args.filter_category:
+        return tag_list, set()
+
+    categories = {c.strip() for c in args.filter_category.split(",")}
+    allowed_keywords = set()
+    all_keywords = set()  # Gathering all keywords from all categories
+    for cat in CATEGORY_KEYWORDS:
+        all_keywords.update(CATEGORY_KEYWORDS[cat])
+        if cat in categories:
+            allowed_keywords.update(CATEGORY_KEYWORDS[cat])
+
+    filtered = []
+    unknown = set()
+
+    for tag in tag_list:
+        normalized_tag = tag.lower().replace(" ", "")
+        matched_any = False
+
+        # Check if tag matches any keyword in any category
+        for keyword in all_keywords:
+            normalized_keyword = keyword.replace(" ", "").lower()
+            if normalized_keyword in normalized_tag or distance(normalized_tag, normalized_keyword) <= MAX_TAG_EDIT_DISTANCE:
+                matched_any = True
+                break
+
+        # If it matches any allowed keyword, add to filtered
+        if matched_any:
+            for keyword in allowed_keywords:
+                normalized_keyword = keyword.replace(" ", "").lower()
+                if normalized_keyword in normalized_tag or distance(normalized_tag, normalized_keyword) <= MAX_TAG_EDIT_DISTANCE:
+                    filtered.append(tag)
+                    break
+
+        # If no match found in any category, add to unknown
+        if not matched_any:
+            unknown.add(tag)
+    return filtered, unknown
 
 # Function to extract prompt metadata and clean Lora tags
 def extract_clean_prompt(img):
@@ -150,6 +195,7 @@ image_extensions = [".png", ".jpg", ".jpeg", ".bmp", ".webp"]
 
 print(f"Tagging images in {IMAGES_DIR}...")
 
+all_unknown_tags = set()
 for filename in os.listdir(IMAGES_DIR):
     if any(filename.lower().endswith(ext) for ext in image_extensions):
         image_path = os.path.join(IMAGES_DIR, filename)
@@ -162,7 +208,6 @@ for filename in os.listdir(IMAGES_DIR):
             continue
 
         # Read and clean metadata prompt
-
         print(f"\n=== {filename} ===")
         cleaned_prompt = None 
         if args.prompt_from_meta:
@@ -190,11 +235,17 @@ for filename in os.listdir(IMAGES_DIR):
 
         # Add only if -pm is specified
         if args.prompt_from_meta and cleaned_prompt:
-            combined_tags_set.update(tag.strip() for tag in cleaned_prompt.split(",") if tag.strip())
+            meta_tags_raw = [tag.strip() for tag in cleaned_prompt.split(",") if tag.strip()]
+            meta_tags_filtered, meta_unknown = filter_tags_by_category(meta_tags_raw)
+            combined_tags_set.update(meta_tags_filtered)
+            all_unknown_tags.update(meta_unknown)
 
         # Add only if -ai is specified
         if args.analys_by_ai and auto_tags:
-            combined_tags_set.update(tag.strip() for tag in auto_tags.split(",") if tag.strip())
+            auto_tags_raw = [tag.strip() for tag in auto_tags.split(",") if tag.strip()]
+            auto_tags_filtered, auto_unknown = filter_tags_by_category(auto_tags_raw)
+            combined_tags_set.update(auto_tags_filtered)
+            all_unknown_tags.update(auto_unknown)
 
         # Convert to string
         combined_tags_string = ", ".join(sorted(combined_tags_set))
@@ -207,3 +258,10 @@ for filename in os.listdir(IMAGES_DIR):
             f.write(combined_tags_string)
 
 print("\nAll done!")
+
+# Save unknown tags
+if all_unknown_tags:
+    unknown_tags_path = os.path.join(TAGS_DIR, "unknown-tags.txt")
+    with open(unknown_tags_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(sorted(all_unknown_tags)))
+    print(f"\n⚠️ Unknown tags saved to {unknown_tags_path}")
