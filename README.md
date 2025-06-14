@@ -72,6 +72,34 @@ Edit these variables in `auto-tagger.py`:
 
 ---
 
+## ✂️ Tag Category Filtering
+
+You can now filter tags by category using:
+
+```bash
+--filter-category bg,pose,nsfw
+```
+
+### Available categories:
+
+| Category | Example Tags |
+|----------|--------------|
+| `bg` | sky, forest, indoor |
+| `pose` | sitting, lying down, arms up |
+| `nsfw` | nude, topless, lingerie |
+| `shape` | curvy, flat chest, abs |
+| `place` | classroom, bathroom, rooftop |
+
+Unknown tags not matching any category will be saved into:
+
+```plaintext
+unknown-tags.txt
+```
+
+This allows you to iterate on new tag types later.
+
+---
+
 ## 📋 Example Output (`image1.txt`)
 
 ```plaintext
@@ -81,6 +109,7 @@ bookcase, cat, cozy room, sunny light, tabby fur
 This output could be a cleaned combination of:
 - Prompt from embedded metadata
 - Tags predicted by the ONNX model
+- Tags filtered by selected categories
 
 ---
 
@@ -104,6 +133,7 @@ bookcase, cat, cozy room, sunny light, tabby fur
 - All duplicates are removed (case-insensitive match)
 - Brackets like `(a)`, `{b}` are stripped to improve consistency
 - Tags are sorted alphabetically
+- Unknown tags saved separately for further review
 
 ---
 
@@ -122,7 +152,7 @@ pip install pyinstaller
 ```bash
 pyinstaller --onefile \
   --add-data="venv/lib/python*/site-packages/onnxruntime:onnxruntime" \
-  auto-tagger.py
+  auto_tagger.py
 ```
 
 Or use the helper script:
