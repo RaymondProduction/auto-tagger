@@ -8,7 +8,7 @@ import re
 import argparse
 from Levenshtein import distance
 
-from tag_categories import CATEGORY_KEYWORDS # Define categories and keywords for filtering
+from tag_categories import CATEGORY_KEYWORDS  # Define categories and keywords for filtering
 
 # Configuration
 #MODEL_NAME = "wd-v1-4-moat-tagger-v2"  # Without ".onnx"
@@ -25,7 +25,8 @@ parser.add_argument("-np", "--no-prompt-from-meta", dest="prompt_from_meta", act
                     help="❌ Disable tags from embedded prompt metadata (default: ON)")
 parser.add_argument("-nai", "--no-analys-by-ai", dest="analys_by_ai", action="store_false",
                     help="❌ Disable AI-based image analysis (default: ON)")
-
+parser.add_argument("-d", "--diff-mode", action="store_true",
+                    help="🧩 Enable diff mode: generate 'different.txt' and 'merged_clean_prompt.txt' from tag files")
 parser.add_argument("-i", "--input", type=str, default="./images", help="Input folder with images")
 parser.add_argument("-o", "--output", type=str, default="./images", help="Output folder for tag text files")
 parser.add_argument("-m", "--model-dir", type=str, default="./models", help="Directory containing ONNX model and tags CSV")
@@ -35,6 +36,54 @@ parser.add_argument("-fc", "--filter-category", type=str,
 
 args = parser.parse_args()
 
+# Diff Mode Logic (Early Exit)
+if args.diff_mode:
+    TAGS_DIR = args.output
+    DIFF_OUTPUT_PATH = os.path.join(TAGS_DIR, "different.txt")
+    STRIPPED_PROMPT_OUTPUT_PATH = os.path.join(TAGS_DIR, "merged_clean_prompt.txt")
+
+    print("🧩 Running diff mode...")
+
+    tag_files = [
+        f for f in os.listdir(TAGS_DIR)
+        if f.endswith(".txt") and not f.startswith(("different", "merged", "unknown"))
+    ]
+
+    tags_per_file = {}
+    for filename in tag_files:
+        path = os.path.join(TAGS_DIR, filename)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                tags = {t.strip() for t in f.read().split(",") if t.strip()}
+                tags_per_file[filename] = tags
+        except Exception as e:
+            print(f"⚠️ Failed to read {filename}: {e}")
+
+    if not tags_per_file:
+        print("❌ No tag files found in output directory.")
+    else:
+        all_tags = set.union(*tags_per_file.values())
+        common_tags = set.intersection(*tags_per_file.values())
+
+        with open(DIFF_OUTPUT_PATH, "w", encoding="utf-8") as diff_file:
+            for filename, tags in tags_per_file.items():
+                diff = sorted(tags - common_tags)
+                diff_file.write(f"=== {filename} ===\n")
+                diff_file.write("\n".join(diff))
+                diff_file.write("\n\n")
+
+        with open(STRIPPED_PROMPT_OUTPUT_PATH, "w", encoding="utf-8") as stripped_file:
+            for filename, tags in tags_per_file.items():
+                kept_tags = sorted(tags & common_tags)
+                prompt = ", ".join(kept_tags)
+                stripped_file.write(f"=== {filename.replace('.txt', '.png')} ===\n")
+                stripped_file.write(f"{prompt} [X] Negative prompt: ...\n\n")
+
+        print(f"\n✅ Diff mode complete.")
+        print(f"  → {DIFF_OUTPUT_PATH}")
+        print(f"  → {STRIPPED_PROMPT_OUTPUT_PATH}")
+
+    exit(0)  # Skip main logic if diff mode is active
 
 # Configuration from arguments
 MAX_TAG_EDIT_DISTANCE = 1  # Allow one typo (for example, "sceneri" => "scenery")
